@@ -68,7 +68,7 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 #define ACCEL_SAD_W                (0x32)
 #define ACCEL_SAD_R                (0x33)
 
-#define ACCEL_USB_SEND_FORMAT       "ACCEL DATA X:0x%04X  Y:0x%04X Z:0x%04X\r\n"
+#define ACCEL_USB_SEND_FORMAT       "ACCEL DATA X:%d Y:%d Z:%d\r\n"
 
 /*** add ***/
 
@@ -530,63 +530,23 @@ void I2C_Tasks(void){
         {
             pic_accelData.timerHandle = SYS_TMR_ObjectCreate(1000, 0, callbackTimer, SYS_TMR_FLAG_PERIODIC);
             pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_WAIT;
-            pic_accelData.i2cState_Next = PIC_ACCEL_I2C_STATE_I2C_OUT_X;
+            pic_accelData.i2cState_Next = PIC_ACCEL_I2C_STATE_I2C_OUT;
             break;
         }
-        case PIC_ACCEL_I2C_STATE_I2C_OUT_X:
-        {
-            pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_WAIT;
-            pic_accelData.i2cState_Next = PIC_ACCEL_I2C_STATE_I2C_OUT_Y;
-            
-            // X軸加速度取得
-            pic_accelData.writeBuf[0] = 0x28;   // OUT_X_L_A OUT_X_H_A
-            pic_accelData.i2cBufferHandle = DRV_I2C_TransmitThenReceive(
-                    pic_accelData.i2cHandle,                        // ハンドル
-                    ACCEL_SAD_W,                                    // アドレス
-                    pic_accelData.writeBuf,                        // 書き込みデータ
-                    1,                                              // 書き込みデータサイズ
-                    &pic_accelData.accelX,                          // 読み込みデータ
-                    2,                                              // 読み込みデータサイズ
-                   NULL);
-            if( pic_accelData.i2cBufferHandle == DRV_I2C_BUFFER_HANDLE_INVALID ){
-                pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_ERROR;
-            }
-            break;
-        }
-        case PIC_ACCEL_I2C_STATE_I2C_OUT_Y:
-        {
-            pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_WAIT;
-            pic_accelData.i2cState_Next = PIC_ACCEL_I2C_STATE_I2C_OUT_Z;
-            
-            // Y軸加速度取得
-            pic_accelData.writeBuf[0] = 0x2A;   // OUT_Y_L_A OUT_Y_H_A
-            pic_accelData.i2cBufferHandle = DRV_I2C_TransmitThenReceive(
-                    pic_accelData.i2cHandle,                        // ハンドル
-                    ACCEL_SAD_W,                                    // アドレス
-                    pic_accelData.writeBuf,                        // 書き込みデータ
-                    1,                                              // 書き込みデータサイズ
-                    &pic_accelData.accelY,                          // 読み込みデータ
-                    2,                                              // 読み込みデータサイズ
-                    NULL);
-            if( pic_accelData.i2cBufferHandle == DRV_I2C_BUFFER_HANDLE_INVALID ){
-                pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_ERROR;
-            }
-            break;
-        }
-        case PIC_ACCEL_I2C_STATE_I2C_OUT_Z:
+        case PIC_ACCEL_I2C_STATE_I2C_OUT:
         {
             pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_WAIT;
             pic_accelData.i2cState_Next = PIC_ACCEL_I2C_STATE_WRITE_BUFFER;
             
-            // Z軸加速度取得
-            pic_accelData.writeBuf[0] = 0x2C;   // OUT_Z_L_A OUT_Z_H_A
+            // X軸 Y軸 Z軸 加速度取得
+            pic_accelData.writeBuf[0] = 0x28 | 0x80;   // OUT_X_L_A
             pic_accelData.i2cBufferHandle = DRV_I2C_TransmitThenReceive(
                     pic_accelData.i2cHandle,                        // ハンドル
                     ACCEL_SAD_W,                                    // アドレス
-                    pic_accelData.writeBuf,                        // 書き込みデータ
+                    pic_accelData.writeBuf,                         // 書き込みデータ
                     1,                                              // 書き込みデータサイズ
-                    &pic_accelData.accelZ,                          // 読み込みデータ
-                    2,                                              // 読み込みデータサイズ
+                    &pic_accelData.readBuf,                         // 読み込みデータ
+                    6,                                              // 読み込みデータサイズ
                     NULL);
             if( pic_accelData.i2cBufferHandle == DRV_I2C_BUFFER_HANDLE_INVALID ){
                 pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_ERROR;
@@ -595,12 +555,17 @@ void I2C_Tasks(void){
         }
         case PIC_ACCEL_I2C_STATE_WRITE_BUFFER:
         {
+            // 加速度取得
+            pic_accelData.accelX = (int16_t)(pic_accelData.readBuf[0] | (pic_accelData.readBuf[1] << 8)) >> 4;
+            pic_accelData.accelY = (int16_t)(pic_accelData.readBuf[2] | (pic_accelData.readBuf[3] << 8)) >> 4;
+            pic_accelData.accelZ = (int16_t)(pic_accelData.readBuf[4] | (pic_accelData.readBuf[5] << 8)) >> 4;
+            
             // USB送信バッファ書き込み
             // 書込み後、USB_TX_TASKS で送信する
             memset( writeBuffer, 0x00, sizeof(writeBuffer) );
             sprintf( writeBuffer, ACCEL_USB_SEND_FORMAT, pic_accelData.accelX, pic_accelData.accelY, pic_accelData.accelZ );
             pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_WAIT;
-            pic_accelData.i2cState_Next = PIC_ACCEL_I2C_STATE_I2C_OUT_X;
+            pic_accelData.i2cState_Next = PIC_ACCEL_I2C_STATE_I2C_OUT;
             break;
         }
         default:

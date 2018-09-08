@@ -102,9 +102,7 @@ typedef enum{
     PIC_ACCEL_I2C_STATE_I2C_CTRL_REG1_A_R,
     PIC_ACCEL_I2C_STATE_I2C_CTRL_REG1_A_CHECK,
     PIC_ACCEL_I2C_STATE_TIMERSTART,
-    PIC_ACCEL_I2C_STATE_I2C_OUT_X,
-    PIC_ACCEL_I2C_STATE_I2C_OUT_Y,
-    PIC_ACCEL_I2C_STATE_I2C_OUT_Z,
+    PIC_ACCEL_I2C_STATE_I2C_OUT,
     PIC_ACCEL_I2C_STATE_WRITE_BUFFER,
     PIC_ACCEL_I2C_STATE_WAIT,
     PIC_ACCEL_I2C_STATE_ERROR,
@@ -160,11 +158,11 @@ typedef struct
     DRV_HANDLE i2cHandle;                   // I2Cハンドル
     DRV_I2C_BUFFER_HANDLE i2cBufferHandle;  // I2Cバッファハンドル
     
-    uint8_t writeBuf[5];                    // 書き込みレジスタ
-    uint8_t readBuf[5];                     // 読み込みレジスタ
-    uint16_t accelX;                        // X軸加速度
-    uint16_t accelY;                        // Y軸加速度
-    uint16_t accelZ;                        // Z軸加速度
+    uint8_t writeBuf[10];                   // 書き込みレジスタ
+    uint8_t readBuf[10];                    // 読み込みレジスタ
+    int16_t accelX;                         // X軸加速度
+    int16_t accelY;                         // Y軸加速度
+    int16_t accelZ;                         // Z軸加速度
     
     SYS_TMR_HANDLE timerHandle;             // タイマーハンドル
     /*** add ***/
