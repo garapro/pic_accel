@@ -49,8 +49,8 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 #include <stdbool.h>
 #include "system/common/sys_common.h"
 #include "system/common/sys_module.h"
-#include "driver/i2c/drv_i2c.h"
-         
+#include "driver/i2c/drv_i2c_bb_a.h"
+ 
      
  
  

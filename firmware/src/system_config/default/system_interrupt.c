@@ -71,16 +71,12 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 
 
  
-void __ISR(_I2C1_MASTER_VECTOR, ipl1AUTO) _IntHandlerDrvI2CMasterInstance0(void)
+void __ISR(_TIMER_9_VECTOR, ipl3AUTO) _IntHandlerDrvI2CMasterInstance0(void)
 {
-    DRV_I2C_Tasks(sysObj.drvI2C0);
+    DRV_I2C_BB_Tasks(sysObj.drvI2C0);
+    PLIB_INT_SourceFlagClear(INT_ID_0, INT_SOURCE_TIMER_9);
 }
 
-
-void __ISR(_I2C1_BUS_VECTOR, ipl1AUTO) _IntHandlerDrvI2CErrorInstance0(void)
-{
-    SYS_ASSERT(false, "I2C Driver Instance 0 Error");
-}
 
      
    

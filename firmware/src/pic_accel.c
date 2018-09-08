@@ -55,11 +55,22 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 
 #include "pic_accel.h"
 
+/*** add ***/
+#include <stdio.h>
+/*** add ***/
+
 // *****************************************************************************
 // *****************************************************************************
 // Section: Global Data Definitions
 // *****************************************************************************
 // *****************************************************************************
+/*** add ***/
+#define ACCEL_SAD_W                (0x32)
+#define ACCEL_SAD_R                (0x33)
+
+#define ACCEL_USB_SEND_FORMAT       "ACCEL DATA X:0x%04X  Y:0x%04X Z:0x%04X\r\n"
+
+/*** add ***/
 
 // *****************************************************************************
 /* Application Data
@@ -88,7 +99,143 @@ static uint8_t writeString[] = "Hello World\r\n";
 // Section: Application Callback Functions
 // *****************************************************************************
 // *****************************************************************************
+USB_DEVICE_CDC_EVENT_RESPONSE PIC_ACCEL_USBDeviceCDCEventHandler(USB_DEVICE_CDC_INDEX index ,USB_DEVICE_CDC_EVENT event ,void * pData,uintptr_t userData);
+void PIC_ACCEL_USBDeviceEventHandler ( USB_DEVICE_EVENT event, void * eventData, uintptr_t context );
+static void callbackTimer( uintptr_t context, uint32_t currTick );
+void PIC_ACCEL_I2CEventHandler( DRV_I2C_BUFFER_EVENT event, DRV_I2C_BUFFER_HANDLE handle, uintptr_t context );
 
+void I2C_Tasks(void);
+static void USB_TX_Task (void);
+
+// *****************************************************************************
+// *****************************************************************************
+// Section: Application Initialization and State Machine Functions
+// *****************************************************************************
+// *****************************************************************************
+
+/*******************************************************************************
+  Function:
+    void PIC_ACCEL_Initialize ( void )
+
+  Remarks:
+    See prototype in pic_accel.h.
+ */
+
+void PIC_ACCEL_Initialize ( void )
+{
+    /* Place the App state machine in its initial state. */
+    pic_accelData.state = PIC_ACCEL_STATE_INIT;
+
+
+    /* Device Layer Handle  */
+    pic_accelData.deviceHandle = USB_DEVICE_HANDLE_INVALID ;
+
+    /* Device configured status */
+    pic_accelData.isConfigured = false;
+
+    /* Initial get line coding state */
+    pic_accelData.getLineCodingData.dwDTERate   = 9600;
+    pic_accelData.getLineCodingData.bParityType =  0;
+    pic_accelData.getLineCodingData.bParityType = 0;
+    pic_accelData.getLineCodingData.bDataBits   = 8;
+
+
+    /* Write Transfer Handle */
+    pic_accelData.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
+    
+    /*Initialize the write data */
+    pic_accelData.writeLen = sizeof(writeString);
+	memcpy(writeBuffer, writeString, pic_accelData.writeLen);
+    
+    /* TODO: Initialize your application's state machine and other
+     * parameters.
+     */
+    /*** add ***/
+    pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_INIT;
+    pic_accelData.i2cState_Next = PIC_ACCEL_I2C_STATE_INIT;
+    pic_accelData.accelX = 0x00;
+    pic_accelData.accelY = 0x00;
+    pic_accelData.accelZ = 0x00;
+    pic_accelData.i2cHandle = DRV_HANDLE_INVALID;
+    pic_accelData.i2cBufferHandle = DRV_I2C_BUFFER_HANDLE_INVALID;
+    pic_accelData.timerHandle = SYS_TMR_HANDLE_INVALID;
+    memset( pic_accelData.writeBuf, 0x00, sizeof(pic_accelData.writeBuf) );
+    memset( pic_accelData.readBuf, 0x00, sizeof(pic_accelData.readBuf) );
+    /*** add ***/
+}
+
+
+/******************************************************************************
+  Function:
+    void PIC_ACCEL_Tasks ( void )
+
+  Remarks:
+    See prototype in pic_accel.h.
+ */
+
+void PIC_ACCEL_Tasks ( void )
+{
+
+    /* Check the application's current state. */
+    switch ( pic_accelData.state )
+    {
+        /* Application's initial state. */
+        case PIC_ACCEL_STATE_INIT:
+        {
+            bool appInitialized = true;
+       
+
+            /* Open the device layer */
+            if (pic_accelData.deviceHandle == USB_DEVICE_HANDLE_INVALID)
+            {
+                pic_accelData.deviceHandle = USB_DEVICE_Open( USB_DEVICE_INDEX_0,
+                                               DRV_IO_INTENT_READWRITE );
+                appInitialized &= ( USB_DEVICE_HANDLE_INVALID != pic_accelData.deviceHandle );
+            }
+            
+            /*** add ***/
+            if (pic_accelData.i2cHandle == DRV_HANDLE_INVALID)
+            {
+                pic_accelData.i2cHandle = DRV_I2C_Open( DRV_I2C_INDEX_0, DRV_IO_INTENT_READWRITE | DRV_IO_INTENT_NONBLOCKING );
+                appInitialized &= ( DRV_HANDLE_INVALID != pic_accelData.i2cHandle );
+            }
+            /*** add ***/
+        
+            if (appInitialized)
+            {
+
+                /* Register a callback with device layer to get event notification (for end point 0) */
+                USB_DEVICE_EventHandlerSet(pic_accelData.deviceHandle,
+                                           PIC_ACCEL_USBDeviceEventHandler, 0);
+                
+                /*** add ***/
+                DRV_I2C_BufferEventHandlerSet(pic_accelData.i2cHandle, PIC_ACCEL_I2CEventHandler, 0);
+                /*** add ***/
+                pic_accelData.state = PIC_ACCEL_STATE_SERVICE_TASKS;
+            }
+            break;
+        }
+
+        case PIC_ACCEL_STATE_SERVICE_TASKS:
+        {
+            USB_TX_Task();
+            /*** add ***/
+            I2C_Tasks();
+            /*** add ***/
+            break;
+        }
+
+        /* TODO: implement your application state machine.*/
+        
+
+        /* The default state should never be executed. */
+        default:
+        {
+            /* TODO: Handle error in application's state machine. */
+            break;
+        }
+    }
+}
 
 /*******************************************************
  * USB CDC Device Events - Application Event Handler
@@ -174,6 +321,9 @@ USB_DEVICE_CDC_EVENT_RESPONSE PIC_ACCEL_USBDeviceCDCEventHandler
 
             /* This means that the host has sent some data*/
             appDataObject->writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
+            /*** add ***/
+            memset( writeBuffer, 0x00, sizeof(writeBuffer));
+            /*** add ***/
             break;
 
         default:
@@ -243,6 +393,32 @@ void PIC_ACCEL_USBDeviceEventHandler ( USB_DEVICE_EVENT event, void * eventData,
 
 /* TODO:  Add any necessary callback functions.
 */
+/*** add ***/
+static void callbackTimer( uintptr_t context, uint32_t currTick )
+{
+    pic_accelData.i2cState = pic_accelData.i2cState_Next;
+    return;
+}
+
+void PIC_ACCEL_I2CEventHandler( DRV_I2C_BUFFER_EVENT event, DRV_I2C_BUFFER_HANDLE handle, uintptr_t context ){
+    switch(event)
+	{
+		case DRV_I2C_BUFFER_EVENT_COMPLETE:
+            //perform appropriate action
+            pic_accelData.i2cState = pic_accelData.i2cState_Next;
+			break;
+
+        case DRV_I2C_BUFFER_EVENT_ERROR:
+            // Error handling here.
+            pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_WAIT;
+            break;
+
+        default:
+            break;
+    }
+    return;
+}
+/*** add ***/
 
 // *****************************************************************************
 // *****************************************************************************
@@ -259,6 +435,10 @@ void PIC_ACCEL_USBDeviceEventHandler ( USB_DEVICE_EVENT event, void * eventData,
 */
 static void USB_TX_Task (void)
 {
+    /*** add ***/
+    uint8_t size;
+    /*** add ***/
+    
     if(!pic_accelData.isConfigured)
     {
         pic_accelData.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
@@ -267,126 +447,170 @@ static void USB_TX_Task (void)
     {
         /* Schedule a write if data is pending 
          */
-        if ((pic_accelData.writeLen > 0)/* && (pic_accelData.writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)*/)
-        {
+        /*** add ***/
+        //if ((pic_accelData.writeLen > 0)/* && (pic_accelData.writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)*/)
+        //{
+        //    USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
+        //                         &pic_accelData.writeTransferHandle,
+        //                         writeBuffer, 
+        //                         pic_accelData.writeLen,
+        //                         USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
+        //}
+        size = strlen(writeBuffer);
+        if ((size > 0) && (pic_accelData.writeTransferHandle == USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID)){
             USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
                                  &pic_accelData.writeTransferHandle,
                                  writeBuffer, 
-                                 pic_accelData.writeLen,
+                                 size,
                                  USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
         }
+        /*** add ***/
     }
 }
 
 
 /* TODO:  Add any necessary local functions.
 */
-
-
-// *****************************************************************************
-// *****************************************************************************
-// Section: Application Initialization and State Machine Functions
-// *****************************************************************************
-// *****************************************************************************
-
-/*******************************************************************************
-  Function:
-    void PIC_ACCEL_Initialize ( void )
-
-  Remarks:
-    See prototype in pic_accel.h.
- */
-
-void PIC_ACCEL_Initialize ( void )
-{
-    /* Place the App state machine in its initial state. */
-    pic_accelData.state = PIC_ACCEL_STATE_INIT;
-
-
-    /* Device Layer Handle  */
-    pic_accelData.deviceHandle = USB_DEVICE_HANDLE_INVALID ;
-
-    /* Device configured status */
-    pic_accelData.isConfigured = false;
-
-    /* Initial get line coding state */
-    pic_accelData.getLineCodingData.dwDTERate   = 9600;
-    pic_accelData.getLineCodingData.bParityType =  0;
-    pic_accelData.getLineCodingData.bParityType = 0;
-    pic_accelData.getLineCodingData.bDataBits   = 8;
-
-
-    /* Write Transfer Handle */
-    pic_accelData.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
+/*** add ***/
+void I2C_Tasks(void){
     
-    /*Initialize the write data */
-    pic_accelData.writeLen = sizeof(writeString);
-	memcpy(writeBuffer, writeString, pic_accelData.writeLen);
-    
-    /* TODO: Initialize your application's state machine and other
-     * parameters.
-     */
-}
-
-
-/******************************************************************************
-  Function:
-    void PIC_ACCEL_Tasks ( void )
-
-  Remarks:
-    See prototype in pic_accel.h.
- */
-
-void PIC_ACCEL_Tasks ( void )
-{
-
-    /* Check the application's current state. */
-    switch ( pic_accelData.state )
-    {
-        /* Application's initial state. */
-        case PIC_ACCEL_STATE_INIT:
+    switch(pic_accelData.i2cState){
+        case PIC_ACCEL_I2C_STATE_INIT:
         {
-            bool appInitialized = true;
-       
-
-            /* Open the device layer */
-            if (pic_accelData.deviceHandle == USB_DEVICE_HANDLE_INVALID)
-            {
-                pic_accelData.deviceHandle = USB_DEVICE_Open( USB_DEVICE_INDEX_0,
-                                               DRV_IO_INTENT_READWRITE );
-                appInitialized &= ( USB_DEVICE_HANDLE_INVALID != pic_accelData.deviceHandle );
-            }
-        
-            if (appInitialized)
-            {
-
-                /* Register a callback with device layer to get event notification (for end point 0) */
-                USB_DEVICE_EventHandlerSet(pic_accelData.deviceHandle,
-                                           PIC_ACCEL_USBDeviceEventHandler, 0);
+            pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_I2C_CTRL_REG1_A_W;
+            break;
+        }
+        case PIC_ACCEL_I2C_STATE_I2C_CTRL_REG1_A_W:
+        {
+            pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_WAIT;
+            pic_accelData.i2cState_Next = PIC_ACCEL_I2C_STATE_I2C_CTRL_REG1_A_R;
             
-                pic_accelData.state = PIC_ACCEL_STATE_SERVICE_TASKS;
+            pic_accelData.writeBuf[0] = 0x20;       // CTRL_REG1_A
+            pic_accelData.writeBuf[1] = 0x97;       // ODR:Normal Zen:1 Yen:1 Xen:1
+            pic_accelData.i2cBufferHandle = DRV_I2C_Transmit(
+                    pic_accelData.i2cHandle,                        // ハンドル
+                    ACCEL_SAD_W,                                    // アドレス
+                    pic_accelData.writeBuf,                        // 書き込みデータ
+                    2,                                              // 書き込みデータサイズ
+                    NULL);
+            break;
+            if( pic_accelData.i2cBufferHandle == DRV_I2C_BUFFER_HANDLE_INVALID ){
+                pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_ERROR;
+            }
+        }
+        case PIC_ACCEL_I2C_STATE_I2C_CTRL_REG1_A_R:
+        {
+            pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_WAIT;
+            pic_accelData.i2cState_Next = PIC_ACCEL_I2C_STATE_I2C_CTRL_REG1_A_CHECK;
+            
+            pic_accelData.writeBuf[0] = 0x20;       // CTRL_REG1_A
+            pic_accelData.i2cBufferHandle = DRV_I2C_TransmitThenReceive(
+                    pic_accelData.i2cHandle,                        // ハンドル
+                    ACCEL_SAD_W,                                    // アドレス
+                    pic_accelData.writeBuf,                         // 書き込みデータ
+                    1,                                              // 書き込みデータサイズ
+                    pic_accelData.readBuf,                          // 読み込みデータ
+                    1,                                              // 読み込みデータサイズ
+                   NULL);
+            break;
+            if( pic_accelData.i2cBufferHandle == DRV_I2C_BUFFER_HANDLE_INVALID ){
+                pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_ERROR;
+            }
+        }
+        case PIC_ACCEL_I2C_STATE_I2C_CTRL_REG1_A_CHECK:
+        {
+            if (pic_accelData.readBuf[0] == 0x97){
+                pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_TIMERSTART;
+            } else {
+                pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_ERROR;
             }
             break;
         }
-
-        case PIC_ACCEL_STATE_SERVICE_TASKS:
+        case PIC_ACCEL_I2C_STATE_TIMERSTART:
         {
-            USB_TX_Task();
-        
+            pic_accelData.timerHandle = SYS_TMR_ObjectCreate(1000, 0, callbackTimer, SYS_TMR_FLAG_PERIODIC);
+            pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_WAIT;
+            pic_accelData.i2cState_Next = PIC_ACCEL_I2C_STATE_I2C_OUT_X;
             break;
         }
-
-        /* TODO: implement your application state machine.*/
-        
-
-        /* The default state should never be executed. */
+        case PIC_ACCEL_I2C_STATE_I2C_OUT_X:
+        {
+            pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_WAIT;
+            pic_accelData.i2cState_Next = PIC_ACCEL_I2C_STATE_I2C_OUT_Y;
+            
+            // X軸加速度取得
+            pic_accelData.writeBuf[0] = 0x28;   // OUT_X_L_A OUT_X_H_A
+            pic_accelData.i2cBufferHandle = DRV_I2C_TransmitThenReceive(
+                    pic_accelData.i2cHandle,                        // ハンドル
+                    ACCEL_SAD_W,                                    // アドレス
+                    pic_accelData.writeBuf,                        // 書き込みデータ
+                    1,                                              // 書き込みデータサイズ
+                    &pic_accelData.accelX,                          // 読み込みデータ
+                    2,                                              // 読み込みデータサイズ
+                   NULL);
+            if( pic_accelData.i2cBufferHandle == DRV_I2C_BUFFER_HANDLE_INVALID ){
+                pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_ERROR;
+            }
+            break;
+        }
+        case PIC_ACCEL_I2C_STATE_I2C_OUT_Y:
+        {
+            pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_WAIT;
+            pic_accelData.i2cState_Next = PIC_ACCEL_I2C_STATE_I2C_OUT_Z;
+            
+            // Y軸加速度取得
+            pic_accelData.writeBuf[0] = 0x2A;   // OUT_Y_L_A OUT_Y_H_A
+            pic_accelData.i2cBufferHandle = DRV_I2C_TransmitThenReceive(
+                    pic_accelData.i2cHandle,                        // ハンドル
+                    ACCEL_SAD_W,                                    // アドレス
+                    pic_accelData.writeBuf,                        // 書き込みデータ
+                    1,                                              // 書き込みデータサイズ
+                    &pic_accelData.accelY,                          // 読み込みデータ
+                    2,                                              // 読み込みデータサイズ
+                    NULL);
+            if( pic_accelData.i2cBufferHandle == DRV_I2C_BUFFER_HANDLE_INVALID ){
+                pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_ERROR;
+            }
+            break;
+        }
+        case PIC_ACCEL_I2C_STATE_I2C_OUT_Z:
+        {
+            pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_WAIT;
+            pic_accelData.i2cState_Next = PIC_ACCEL_I2C_STATE_WRITE_BUFFER;
+            
+            // Z軸加速度取得
+            pic_accelData.writeBuf[0] = 0x2C;   // OUT_Z_L_A OUT_Z_H_A
+            pic_accelData.i2cBufferHandle = DRV_I2C_TransmitThenReceive(
+                    pic_accelData.i2cHandle,                        // ハンドル
+                    ACCEL_SAD_W,                                    // アドレス
+                    pic_accelData.writeBuf,                        // 書き込みデータ
+                    1,                                              // 書き込みデータサイズ
+                    &pic_accelData.accelZ,                          // 読み込みデータ
+                    2,                                              // 読み込みデータサイズ
+                    NULL);
+            if( pic_accelData.i2cBufferHandle == DRV_I2C_BUFFER_HANDLE_INVALID ){
+                pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_ERROR;
+            }
+            break;
+        }
+        case PIC_ACCEL_I2C_STATE_WRITE_BUFFER:
+        {
+            // USB送信バッファ書き込み
+            // 書込み後、USB_TX_TASKS で送信する
+            memset( writeBuffer, 0x00, sizeof(writeBuffer) );
+            sprintf( writeBuffer, ACCEL_USB_SEND_FORMAT, pic_accelData.accelX, pic_accelData.accelY, pic_accelData.accelZ );
+            pic_accelData.i2cState = PIC_ACCEL_I2C_STATE_WAIT;
+            pic_accelData.i2cState_Next = PIC_ACCEL_I2C_STATE_I2C_OUT_X;
+            break;
+        }
         default:
-        {
-            /* TODO: Handle error in application's state machine. */
             break;
-        }
+        
     }
+    return;
 }
+
+/*** add ***/
 
  
 
